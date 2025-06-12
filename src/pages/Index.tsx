@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -60,14 +59,14 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-[115rem] mx-auto">
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4 flex items-center justify-center gap-3">
+          <h4 className="text-4xl font-bold text-gray-900 mb-4 flex items-center justify-center gap-3">
             <FileText className="text-blue-600" size={40} />
-            Sistema de Extração de Dados PDF
-          </h1>
+            Extração de Dados PDF - Proforma Invoice
+          </h4>
           <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-            Upload de PDFs, extração automática de dados via ChatGPT e exportação para Excel
+            Faça o upload de 1 ou mais PDF's para extração automática de dados pelo ChatGPT
           </p>
         </div>
 
