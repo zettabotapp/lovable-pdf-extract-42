@@ -1,4 +1,3 @@
-
 import { ExtractedData, ExtractionResult } from '@/types/ExtractedData';
 import * as pdfjsLib from 'pdfjs-dist';
 
@@ -94,34 +93,29 @@ export const extractTextFromPDF = async (file: File): Promise<string> => {
 export const extractDataWithChatGPT = async (
   pdfText: string,
   apiKey: string
-): Promise<ExtractionResult> => {
-  const prompt = `Analise o seguinte texto extraído de um PDF de uma fatura (Proforma Invoice) e identifique os seguintes campos específicos.
+): Promise<ExtractionResult[]> => {
+  const prompt = `Analise o seguinte texto extraído de um PDF de uma fatura (Proforma Invoice) e identifique os seguintes campos para TODOS os itens da tabela.
 
 INSTRUÇÕES CRÍTICAS PARA EXTRAÇÃO DE DADOS DA TABELA:
 1. O "itemNo" deve ser extraído da PRIMEIRA COLUNA da tabela (Item No.), não da descrição
-2. Procure por códigos como "72692-01", "72692-02" etc. na primeira coluna
-3. A "description" deve incluir TODAS as linhas da segunda coluna (Commodity & Specifications) relacionadas ao primeiro item encontrado:
-   - Nome do produto (ex: coffee maker 127V, coffee maker 220V)
-   - Serial NO. com todos os números seriais listados
-   - G.W. (Gross Weight) - peso bruto
-   - N.W. (Net Weight) - peso líquido 
-   - Total G.W. e Total N.W.
-   - TOTAL com informações de CTN e CBM
-   - Qualquer especificação técnica adicional
+2. Procure por TODOS os códigos como "72692-01", "72692-02" etc. na primeira coluna
+3. A "description" deve incluir apenas o nome do produto (ex: coffee maker 127V, coffee maker 220V)
+4. NÃO inclua Serial NO., G.W., N.W., Total G.W., Total N.W. na descrição
+5. Extraia TODOS os itens encontrados na tabela, não apenas o primeiro
 
-IMPORTANTE: Extraia apenas o PRIMEIRO item encontrado na tabela. Se houver múltiplos itens (72692-01, 72692-02, etc.), extraia somente os dados do primeiro (72692-01).
+IMPORTANTE: Extraia TODOS os itens encontrados na tabela. Se houver múltiplos itens (72692-01, 72692-02, etc.), extraia os dados de TODOS eles.
 
-Retorne apenas os valores encontrados em formato JSON válido, sem comentários ou texto adicional:
+Retorne um array JSON com todos os itens encontrados, sem comentários ou texto adicional:
 
-Campos para extrair:
+Campos para extrair para cada item:
 - piNo (P/I No.)
 - poNo (P/O No.)
 - scNo (S/C No.)
-- itemNo (código da PRIMEIRA coluna da tabela - ex: 72692-01)
-- description (descrição COMPLETA do primeiro item incluindo todas as especificações técnicas da segunda coluna)
-- quantity (quantidade do primeiro item)
-- unitPrice (preço unitário do primeiro item)
-- amount (valor total do primeiro item)
+- itemNo (código da PRIMEIRA coluna da tabela - ex: 72692-01, 72692-02)
+- description (apenas o nome do produto, sem especificações técnicas)
+- quantity (quantidade do item)
+- unitPrice (preço unitário do item)
+- amount (valor total do item)
 - beneficiary (BENEFICIARY)
 - nameOfBank (NAME OF THE BANK)
 - accountNo (ACCOUNT No.)
@@ -132,7 +126,7 @@ Se algum campo não for encontrado, deixe como string vazia "".
 Texto do PDF:
 ${pdfText}
 
-Responda apenas com o JSON:`;
+Responda apenas com o array JSON:`;
 
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -146,7 +140,7 @@ Responda apenas com o JSON:`;
         messages: [
           {
             role: 'system',
-            content: 'Você é um assistente especializado em extrair dados estruturados de faturas e documentos comerciais. Você deve focar especialmente na extração correta de códigos de itens da primeira coluna da tabela e capturar todas as especificações técnicas relacionadas a cada item. Retorne sempre JSON válido sem comentários.'
+            content: 'Você é um assistente especializado em extrair dados estruturados de faturas e documentos comerciais. Você deve extrair TODOS os itens da tabela, não apenas o primeiro. Retorne sempre um array JSON válido sem comentários.'
           },
           {
             role: 'user',
@@ -154,7 +148,7 @@ Responda apenas com o JSON:`;
           }
         ],
         temperature: 0.1,
-        max_tokens: 1500,
+        max_tokens: 2000,
       }),
     });
 
@@ -183,7 +177,14 @@ Responda apenas com o JSON:`;
     try {
       const parsedResult = JSON.parse(jsonStr);
       console.log('Dados extraídos via ChatGPT:', parsedResult);
-      return parsedResult;
+      
+      // Garantir que retornamos um array
+      if (Array.isArray(parsedResult)) {
+        return parsedResult;
+      } else {
+        // Se retornou um objeto único, colocar em array
+        return [parsedResult];
+      }
     } catch (parseError) {
       console.error('Erro ao fazer parse do JSON:', parseError);
       console.log('Resposta original:', content);
@@ -199,14 +200,14 @@ Responda apenas com o JSON:`;
   }
 };
 
-// Função de fallback para extração manual com foco em tabelas estruturadas
-const extractDataManually = (text: string): ExtractionResult => {
-  const result: ExtractionResult = {};
+// Função de fallback para extração manual com foco em múltiplos itens
+const extractDataManually = (text: string): ExtractionResult[] => {
+  const results: ExtractionResult[] = [];
   
   console.log('Executando extração manual de dados...');
   
-  // Patterns mais específicos para documentos de fatura
-  const patterns = {
+  // Patterns para campos comuns
+  const commonPatterns = {
     piNo: /P\/I\s+No\.?\s*:?\s*([^\s\n\r]+)/i,
     poNo: /P\/O\s+No\.?\s*:?\s*([^\s\n\r]+)/i,
     scNo: /S\/C\s+No\.?\s*:?\s*([^\s\n\r]+)/i,
@@ -216,119 +217,84 @@ const extractDataManually = (text: string): ExtractionResult => {
     accountNo: /ACCOUNT\s+No\.?\s*:?\s*([^\s\n\r]+)/i,
   };
 
-  for (const [key, pattern] of Object.entries(patterns)) {
+  // Extrair dados comuns
+  const commonData: Partial<ExtractionResult> = {};
+  for (const [key, pattern] of Object.entries(commonPatterns)) {
     const match = text.match(pattern);
     if (match && match[1]) {
-      result[key as keyof ExtractionResult] = match[1].trim();
+      commonData[key as keyof ExtractionResult] = match[1].trim();
     }
   }
 
-  // Extrair dados da tabela de itens focando na estrutura correta
+  // Extrair dados da tabela de itens
   const tableMatch = text.match(/Item\s+No\.[\s\S]*?Commodity\s+&\s+Specifications[\s\S]*?(?=REMARKS|BENEFICIARY|\$.*DOLLARS|$)/i);
   
   if (tableMatch) {
     const tableText = tableMatch[0];
     console.log('Texto da tabela encontrado:', tableText.substring(0, 500));
     
-    // Buscar o primeiro código de item na primeira coluna (formato XXXXX-XX)
+    // Buscar TODOS os códigos de item na primeira coluna (formato XXXXX-XX)
     const itemCodePattern = /(\d{5}-\d{2})/g;
     const itemMatches = Array.from(tableText.matchAll(itemCodePattern));
     
+    console.log('Códigos de item encontrados:', itemMatches.map(m => m[1]));
+    
     if (itemMatches.length > 0) {
-      // Pegar o primeiro item encontrado
-      const firstItemCode = itemMatches[0][1];
-      result.itemNo = firstItemCode;
-      console.log('Item No. extraído:', result.itemNo);
-      
-      // Encontrar a posição do primeiro item para extrair suas especificações
-      const itemStartIndex = tableText.indexOf(firstItemCode);
-      let itemEndIndex = tableText.length;
-      
-      // Se houver um segundo item, limitar a extração até ele
-      if (itemMatches.length > 1) {
-        itemEndIndex = tableText.indexOf(itemMatches[1][1]);
-      }
-      
-      const itemSection = tableText.substring(itemStartIndex, itemEndIndex);
-      console.log('Seção do item:', itemSection.substring(0, 300));
-      
-      // Extrair descrição completa do item incluindo todas as especificações
-      const descriptionParts: string[] = [];
-      
-      // Produto principal (coffee maker, etc.)
-      const productMatch = itemSection.match(/coffee\s+maker\s+\d+V/i);
-      if (productMatch) {
-        descriptionParts.push(productMatch[0]);
-      }
-      
-      // Serial NO. - capturar toda a linha
-      const serialMatch = itemSection.match(/Serial\s+NO\.?\s*:?\s*([^\n\r]+)/i);
-      if (serialMatch) {
-        descriptionParts.push(`Serial NO.: ${serialMatch[1].trim()}`);
-      }
-      
-      // G.W. e N.W. - capturar pesos individuais e totais
-      const gwMatches = Array.from(itemSection.matchAll(/(?:G\.W\.|Total\s+G\.W\.)\s*:?\s*([\d.,]+\s*kgs?)/gi));
-      gwMatches.forEach(match => {
-        descriptionParts.push(`G.W.: ${match[1]}`);
+      // Processar cada item encontrado
+      itemMatches.forEach((itemMatch, index) => {
+        const itemCode = itemMatch[1];
+        
+        // Encontrar a linha que contém este item específico
+        const lines = tableText.split('\n');
+        const itemLine = lines.find(line => line.includes(itemCode));
+        
+        if (itemLine) {
+          console.log(`Processando item ${itemCode}:`, itemLine);
+          
+          const itemResult: ExtractionResult = {
+            ...commonData,
+            itemNo: itemCode
+          };
+          
+          // Extrair descrição básica (coffee maker)
+          const productMatch = itemLine.match(/coffee\s+maker\s+\d+V/i);
+          if (productMatch) {
+            itemResult.description = productMatch[0];
+          }
+          
+          // Extrair valores numéricos da linha do item
+          const numbers = itemLine.match(/\d{1,3}(?:,\d{3})*/g);
+          const prices = itemLine.match(/\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g);
+          
+          if (numbers && numbers.length > 0) {
+            // Primeira ocorrência geralmente é a quantidade
+            itemResult.quantity = numbers[0];
+          }
+          
+          if (prices && prices.length > 0) {
+            // Primeiro preço é unitário
+            itemResult.unitPrice = prices[0];
+            
+            // Se houver dois preços, o segundo é o total
+            if (prices.length > 1) {
+              itemResult.amount = prices[1];
+            }
+          }
+          
+          results.push(itemResult);
+        }
       });
-      
-      const nwMatches = Array.from(itemSection.matchAll(/(?:N\.W\.|Total\s+N\.W\.)\s*:?\s*([\d.,]+\s*kgs?)/gi));
-      nwMatches.forEach(match => {
-        descriptionParts.push(`N.W.: ${match[1]}`);
-      });
-      
-      // TOTAL com CTN e CBM
-      const totalMatch = itemSection.match(/TOTAL\s*:?\s*([^\n\r]+)/i);
-      if (totalMatch) {
-        descriptionParts.push(`TOTAL: ${totalMatch[1].trim()}`);
-      }
-      
-      if (descriptionParts.length > 0) {
-        result.description = descriptionParts.join(' | ');
-        console.log('Descrição extraída:', result.description);
-      }
-      
-      // Extrair quantidade, preço e valor do primeiro item
-      // Buscar na linha do primeiro item os valores numéricos
-      const firstItemLine = itemSection.split('\n').find(line => 
-        line.includes(firstItemCode) || line.match(/\d{1,3}(?:,\d{3})*(?:\.\d{2})?/)
-      );
-      
-      if (firstItemLine) {
-        console.log('Linha do primeiro item:', firstItemLine);
-        
-        // Extrair quantidade (número antes do preço)
-        const quantityMatch = firstItemLine.match(/(\d{1,3}(?:,\d{3})*)\s+\$\s*\d/);
-        if (quantityMatch) {
-          result.quantity = quantityMatch[1];
-        }
-        
-        // Extrair preço unitário
-        const priceMatch = firstItemLine.match(/\$\s*(\d+(?:\.\d{2})?)/);
-        if (priceMatch) {
-          result.unitPrice = `$${priceMatch[1]}`;
-        }
-        
-        // Extrair valor total (último valor monetário da linha)
-        const amountMatches = Array.from(firstItemLine.matchAll(/\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g));
-        if (amountMatches.length > 1) {
-          // Pegar o último valor (amount total)
-          const lastAmount = amountMatches[amountMatches.length - 1];
-          result.amount = `$${lastAmount[1]}`;
-        }
-      }
     }
   }
 
-  console.log('Resultado da extração manual:', result);
-  return result;
+  console.log('Resultado da extração manual:', results);
+  return results.length > 0 ? results : [commonData as ExtractionResult];
 };
 
 export const extractDataFromPDF = async (
   file: File,
   apiKey: string
-): Promise<ExtractedData> => {
+): Promise<ExtractedData[]> => {
   console.log(`Iniciando extração de dados do arquivo: ${file.name}`);
   
   try {
@@ -336,13 +302,13 @@ export const extractDataFromPDF = async (
     const pdfText = await extractTextFromPDF(file);
     console.log('Texto extraído do PDF:', pdfText.substring(0, 500) + '...');
     
-    // Extrair dados usando ChatGPT
-    const extractedFields = await extractDataWithChatGPT(pdfText, apiKey);
-    console.log('Campos extraídos:', extractedFields);
+    // Extrair dados usando ChatGPT - agora retorna array
+    const extractedFieldsArray = await extractDataWithChatGPT(pdfText, apiKey);
+    console.log('Campos extraídos:', extractedFieldsArray);
 
-    // Montar o objeto final
-    const extractedData: ExtractedData = {
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+    // Montar o array de objetos finais
+    const extractedDataArray: ExtractedData[] = extractedFieldsArray.map((extractedFields, index) => ({
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 9) + '_' + index,
       fileName: file.name,
       piNo: extractedFields.piNo || '',
       poNo: extractedFields.poNo || '',
@@ -357,9 +323,9 @@ export const extractDataFromPDF = async (
       accountNo: extractedFields.accountNo || '',
       swift: extractedFields.swift || '',
       extractedAt: new Date().toISOString(),
-    };
+    }));
 
-    return extractedData;
+    return extractedDataArray;
   } catch (error) {
     console.error('Erro na extração de dados:', error);
     throw error;

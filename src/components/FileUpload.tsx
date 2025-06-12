@@ -1,4 +1,3 @@
-
 import React, { useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Card } from '@/components/ui/card';
@@ -49,8 +48,9 @@ export const FileUpload: React.FC<FileUploadProps> = ({
         });
 
         try {
-          const extractedData = await extractDataFromPDF(file, apiKey);
-          extractedResults.push(extractedData);
+          // extractDataFromPDF agora retorna um array de ExtractedData
+          const extractedDataArray = await extractDataFromPDF(file, apiKey);
+          extractedResults.push(...extractedDataArray);
         } catch (error) {
           console.error(`Erro ao processar ${file.name}:`, error);
           toast({
