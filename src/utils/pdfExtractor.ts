@@ -1,43 +1,102 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { ExtractedData, ExtractionResult } from '@/types/ExtractedData';
 
-// Configuração simples sem worker externo - usando a versão legacy
-pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+// Desabilitar completamente o worker para evitar erros de CORS
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'data:application/javascript;base64,';
 
 export const extractTextFromPDF = async (file: File): Promise<string> => {
   try {
+    console.log(`Iniciando extração de texto do arquivo: ${file.name}`);
     const arrayBuffer = await file.arrayBuffer();
     
-    // Usar a versão sem worker para evitar problemas de CORS
+    // Configuração mais simples possível
     const loadingTask = pdfjsLib.getDocument({
       data: arrayBuffer,
+      worker: null, // Força a não usar worker
+      verbosity: 0, // Reduz logs
+      cMapUrl: '',
+      cMapPacked: false,
+      standardFontDataUrl: '',
       useWorkerFetch: false,
       isEvalSupported: false,
-      useSystemFonts: true
+      useSystemFonts: true,
+      disableFontFace: true,
+      disableRange: true,
+      disableStream: true,
+      disableAutoFetch: true
     });
     
     const pdf = await loadingTask.promise;
+    console.log(`PDF carregado com sucesso. Número de páginas: ${pdf.numPages}`);
+    
     let fullText = '';
 
     for (let i = 1; i <= pdf.numPages; i++) {
       try {
+        console.log(`Processando página ${i}...`);
         const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
+        const textContent = await page.getTextContent({
+          includeMarkedContent: false,
+          disableCombineTextItems: false
+        });
+        
         const pageText = textContent.items
+          .filter((item: any) => item.str && item.str.trim())
           .map((item: any) => item.str)
           .join(' ');
-        fullText += pageText + '\n';
+        
+        if (pageText.trim()) {
+          fullText += pageText + '\n';
+          console.log(`Página ${i} processada. Texto extraído: ${pageText.substring(0, 100)}...`);
+        }
       } catch (pageError) {
         console.warn(`Erro ao processar página ${i}:`, pageError);
         // Continua com as outras páginas mesmo se uma der erro
       }
     }
 
+    console.log(`Extração concluída. Total de caracteres: ${fullText.length}`);
+    
+    if (!fullText.trim()) {
+      throw new Error('Nenhum texto foi extraído do PDF. O arquivo pode estar com imagens ou estar protegido.');
+    }
+
     return fullText;
   } catch (error) {
-    console.error('Erro ao extrair texto do PDF:', error);
-    throw new Error(`Falha ao extrair texto do PDF: ${error.message}`);
+    console.error('Erro detalhado ao extrair texto do PDF:', error);
+    
+    // Se for erro de worker, tentar uma última abordagem
+    if (error.message && error.message.includes('worker')) {
+      console.log('Tentando abordagem alternativa sem worker...');
+      try {
+        return await extractTextFallback(file);
+      } catch (fallbackError) {
+        console.error('Fallback também falhou:', fallbackError);
+      }
+    }
+    
+    throw new Error(`Falha ao extrair texto do PDF: ${error.message || 'Erro desconhecido'}`);
   }
+};
+
+// Função de fallback mais simples
+const extractTextFallback = async (file: File): Promise<string> => {
+  const arrayBuffer = await file.arrayBuffer();
+  
+  // Tentar com configuração mínima absoluta
+  const pdf = await pdfjsLib.getDocument({
+    data: arrayBuffer
+  }).promise;
+  
+  let text = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items.map((item: any) => item.str).join(' ');
+    text += pageText + '\n';
+  }
+  
+  return text;
 };
 
 export const extractDataWithChatGPT = async (
@@ -168,7 +227,7 @@ export const extractDataFromPDF = async (
     // Extrair texto do PDF
     const pdfText = await extractTextFromPDF(file);
     console.log('Texto extraído do PDF:', pdfText.substring(0, 500) + '...');
-
+    
     // Extrair dados usando ChatGPT
     const extractedFields = await extractDataWithChatGPT(pdfText, apiKey);
     console.log('Campos extraídos:', extractedFields);
