@@ -1,12 +1,9 @@
-
-import * as pdfjsLib from 'pdfjs-dist';
 import { ExtractedData, ExtractionResult } from '@/types/ExtractedData';
+import * as pdfjsLib from 'pdfjs-dist';
 
-// Configuração do worker usando o arquivo local
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.js',
-  import.meta.url
-).toString();
+// Configuração do worker usando pdfjs-dist
+// Tente usar o arquivo .mjs se não houver o .js
+pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
 export const extractTextFromPDF = async (file: File): Promise<string> => {
   try {
