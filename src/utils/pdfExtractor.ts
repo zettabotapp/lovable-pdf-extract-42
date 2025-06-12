@@ -1,8 +1,8 @@
+
 import { ExtractedData, ExtractionResult } from '@/types/ExtractedData';
 import * as pdfjsLib from 'pdfjs-dist';
 
 // Configuração do worker usando pdfjs-dist
-// Tente usar o arquivo .mjs se não houver o .js
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
 export const extractTextFromPDF = async (file: File): Promise<string> => {
@@ -30,18 +30,51 @@ export const extractTextFromPDF = async (file: File): Promise<string> => {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
         
-        const pageText = textContent.items
+        // Extrair texto com posicionamento para melhor análise de tabelas
+        const textItems = textContent.items
           .filter((item: any) => item.str && item.str.trim())
-          .map((item: any) => item.str)
-          .join(' ');
+          .map((item: any) => ({
+            text: item.str.trim(),
+            x: item.transform[4],
+            y: item.transform[5],
+            width: item.width,
+            height: item.height
+          }))
+          .sort((a, b) => b.y - a.y || a.x - b.x); // Ordenar por linha (y) e depois por coluna (x)
+        
+        // Agrupar itens por linha (mesmo Y aproximado)
+        const lines: any[][] = [];
+        let currentLine: any[] = [];
+        let lastY = -1;
+        const yTolerance = 5; // Tolerância para considerar mesma linha
+        
+        textItems.forEach(item => {
+          if (lastY === -1 || Math.abs(item.y - lastY) <= yTolerance) {
+            currentLine.push(item);
+          } else {
+            if (currentLine.length > 0) {
+              lines.push([...currentLine]);
+            }
+            currentLine = [item];
+          }
+          lastY = item.y;
+        });
+        
+        if (currentLine.length > 0) {
+          lines.push(currentLine);
+        }
+        
+        // Converter linhas agrupadas em texto
+        const pageText = lines
+          .map(line => line.map(item => item.text).join(' '))
+          .join('\n');
         
         if (pageText.trim()) {
           fullText += pageText + '\n';
-          console.log(`Página ${i} processada. Texto extraído: ${pageText.substring(0, 100)}...`);
+          console.log(`Página ${i} processada. Texto extraído: ${pageText.substring(0, 200)}...`);
         }
       } catch (pageError) {
         console.warn(`Erro ao processar página ${i}:`, pageError);
-        // Continua com as outras páginas mesmo se uma der erro
       }
     }
 
@@ -62,22 +95,35 @@ export const extractDataWithChatGPT = async (
   pdfText: string,
   apiKey: string
 ): Promise<ExtractionResult> => {
-  const prompt = `Analise o seguinte texto extraído de um PDF e identifique os seguintes campos específicos. 
+  const prompt = `Analise o seguinte texto extraído de um PDF de uma fatura (Proforma Invoice) e identifique os seguintes campos específicos.
+
+IMPORTANTE para extração de itens da tabela:
+- O "itemNo" deve ser o código da primeira coluna da tabela (ex: 72692-01, 72692-02, etc.)
+- A "description" deve incluir TODAS as linhas relacionadas ao item, incluindo:
+  * Nome do produto (ex: coffee maker 127V)
+  * Serial NO. (se houver)
+  * G.W. (Gross Weight)
+  * N.W. (Net Weight)
+  * TOTAL com informações de CTN
+  * Qualquer especificação técnica adicional
+
+Se houver múltiplos itens, extraia apenas o PRIMEIRO item encontrado na tabela.
+
 Retorne apenas os valores encontrados em formato JSON válido, sem comentários ou texto adicional:
 
 Campos para extrair:
 - piNo (P/I No.)
 - poNo (P/O No.)
 - scNo (S/C No.)
-- itemNo (Item No.)
-- description (Description)
-- quantity (Quantity)
-- unitPrice (Unit Price)
-- amount (Amount)
+- itemNo (código da primeira coluna da tabela de itens)
+- description (descrição completa do item incluindo todas as especificações)
+- quantity (quantidade do item)
+- unitPrice (preço unitário)
+- amount (valor total do item)
 - beneficiary (BENEFICIARY)
 - nameOfBank (NAME OF THE BANK)
 - accountNo (ACCOUNT No.)
-- swift (SWIFT, geralmente ZSRCCNBB ou similar)
+- swift (SWIFT)
 
 Se algum campo não for encontrado, deixe como string vazia "".
 
@@ -94,11 +140,11 @@ Responda apenas com o JSON:`;
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4o',
         messages: [
           {
             role: 'system',
-            content: 'Você é um assistente especializado em extrair dados estruturados de documentos. Retorne sempre JSON válido sem comentários.'
+            content: 'Você é um assistente especializado em extrair dados estruturados de faturas e documentos comerciais. Você deve focar especialmente na extração correta de dados de tabelas com múltiplas linhas por item. Retorne sempre JSON válido sem comentários.'
           },
           {
             role: 'user',
@@ -106,7 +152,7 @@ Responda apenas com o JSON:`;
           }
         ],
         temperature: 0.1,
-        max_tokens: 1000,
+        max_tokens: 1500,
       }),
     });
 
@@ -134,6 +180,7 @@ Responda apenas com o JSON:`;
 
     try {
       const parsedResult = JSON.parse(jsonStr);
+      console.log('Dados extraídos via ChatGPT:', parsedResult);
       return parsedResult;
     } catch (parseError) {
       console.error('Erro ao fazer parse do JSON:', parseError);
@@ -150,20 +197,21 @@ Responda apenas com o JSON:`;
   }
 };
 
-// Função de fallback para extração manual básica
+// Função de fallback para extração manual com foco em tabelas
 const extractDataManually = (text: string): ExtractionResult => {
   const result: ExtractionResult = {};
   
-  // Patterns comuns para buscar os campos
+  console.log('Executando extração manual de dados...');
+  
+  // Patterns mais específicos para documentos de fatura
   const patterns = {
-    piNo: /P\/I\s+No\.?\s*:?\s*([^\n\r]+)/i,
-    poNo: /P\/O\s+No\.?\s*:?\s*([^\n\r]+)/i,
-    scNo: /S\/C\s+No\.?\s*:?\s*([^\n\r]+)/i,
-    itemNo: /Item\s+No\.?\s*:?\s*([^\n\r]+)/i,
+    piNo: /P\/I\s+No\.?\s*:?\s*([^\s\n\r]+)/i,
+    poNo: /P\/O\s+No\.?\s*:?\s*([^\s\n\r]+)/i,
+    scNo: /S\/C\s+No\.?\s*:?\s*([^\s\n\r]+)/i,
     swift: /SWIFT\s*:?\s*([A-Z0-9]+)/i,
     beneficiary: /BENEFICIARY\s*:?\s*([^\n\r]+)/i,
     nameOfBank: /NAME\s+OF\s+THE\s+BANK\s*:?\s*([^\n\r]+)/i,
-    accountNo: /ACCOUNT\s+No\.?\s*:?\s*([^\n\r]+)/i,
+    accountNo: /ACCOUNT\s+No\.?\s*:?\s*([^\s\n\r]+)/i,
   };
 
   for (const [key, pattern] of Object.entries(patterns)) {
@@ -173,6 +221,79 @@ const extractDataManually = (text: string): ExtractionResult => {
     }
   }
 
+  // Extrair dados da tabela de itens de forma mais específica
+  const tableMatch = text.match(/Item\s+No\.[\s\S]*?Commodity\s+&\s+Specifications[\s\S]*?(?=REMARKS|BENEFICIARY|$)/i);
+  
+  if (tableMatch) {
+    const tableText = tableMatch[0];
+    console.log('Texto da tabela encontrado:', tableText.substring(0, 300));
+    
+    // Buscar o primeiro item da tabela (código numérico seguido de hífen)
+    const itemMatch = tableText.match(/(\d{5}-\d{2})/);
+    if (itemMatch) {
+      result.itemNo = itemMatch[1];
+      console.log('Item No. extraído:', result.itemNo);
+      
+      // Extrair descrição completa do item
+      const itemStartIndex = tableText.indexOf(itemMatch[1]);
+      const remainingTable = tableText.substring(itemStartIndex);
+      
+      // Buscar padrões de descrição, serial, pesos, etc.
+      const descriptionParts: string[] = [];
+      
+      // Produto principal (coffee maker, etc.)
+      const productMatch = remainingTable.match(/coffee\s+maker\s+\d+V/i);
+      if (productMatch) {
+        descriptionParts.push(productMatch[0]);
+      }
+      
+      // Serial NO.
+      const serialMatch = remainingTable.match(/Serial\s+NO\.?\s*:?\s*([^\n\r]+)/i);
+      if (serialMatch) {
+        descriptionParts.push(`Serial NO.: ${serialMatch[1].trim()}`);
+      }
+      
+      // G.W. e N.W.
+      const gwMatch = remainingTable.match(/G\.W\.?\s*:?\s*([\d.]+\s*kgs?)/i);
+      if (gwMatch) {
+        descriptionParts.push(`G.W.: ${gwMatch[1]}`);
+      }
+      
+      const nwMatch = remainingTable.match(/N\.W\.?\s*:?\s*([\d.]+\s*kgs?)/i);
+      if (nwMatch) {
+        descriptionParts.push(`N.W.: ${nwMatch[1]}`);
+      }
+      
+      // TOTAL com CTN
+      const totalMatch = remainingTable.match(/TOTAL\s*:?\s*([^\n\r]+)/i);
+      if (totalMatch) {
+        descriptionParts.push(`TOTAL: ${totalMatch[1].trim()}`);
+      }
+      
+      if (descriptionParts.length > 0) {
+        result.description = descriptionParts.join(' | ');
+        console.log('Descrição extraída:', result.description);
+      }
+      
+      // Extrair quantidade, preço e valor
+      const quantityMatch = remainingTable.match(/(\d+(?:\.\d+)?)\s*(?=\s*\$|\s*USD|\s*\d+\.\d+)/);
+      if (quantityMatch) {
+        result.quantity = quantityMatch[1];
+      }
+      
+      const priceMatch = remainingTable.match(/\$?\s*(\d+(?:\.\d+)?)\s*(?=\s*\$|\s*USD)/);
+      if (priceMatch) {
+        result.unitPrice = `$${priceMatch[1]}`;
+      }
+      
+      const amountMatch = remainingTable.match(/\$\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/);
+      if (amountMatch) {
+        result.amount = `$${amountMatch[1]}`;
+      }
+    }
+  }
+
+  console.log('Resultado da extração manual:', result);
   return result;
 };
 
