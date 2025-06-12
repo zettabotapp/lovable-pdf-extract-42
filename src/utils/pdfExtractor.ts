@@ -1,8 +1,12 @@
+
 import * as pdfjsLib from 'pdfjs-dist';
 import { ExtractedData, ExtractionResult } from '@/types/ExtractedData';
 
-// Configurar o worker do PDF.js para funcionar no navegador - versão corrigida
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js`;
+// Configurar o worker do PDF.js para funcionar no navegador - versão compatível com Vite
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.js',
+  import.meta.url
+).toString();
 
 export const extractTextFromPDF = async (file: File): Promise<string> => {
   try {
