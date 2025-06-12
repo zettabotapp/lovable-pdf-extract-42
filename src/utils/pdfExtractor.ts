@@ -1,19 +1,21 @@
-
 import * as pdfjsLib from 'pdfjs-dist';
 import { ExtractedData, ExtractionResult } from '@/types/ExtractedData';
 
-// Configuração para desabilitar completamente o worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+// Configuração correta do worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 export const extractTextFromPDF = async (file: File): Promise<string> => {
   try {
     console.log(`Iniciando extração de texto do arquivo: ${file.name}`);
     const arrayBuffer = await file.arrayBuffer();
     
-    // Configuração simplificada sem worker
+    // Configuração otimizada do PDF.js
     const loadingTask = pdfjsLib.getDocument({
       data: arrayBuffer,
-      // Remover todas as configurações que podem causar problemas
+      verbosity: 0,
+      disableAutoFetch: true,
+      disableStream: true,
+      disableRange: true,
     });
     
     const pdf = await loadingTask.promise;
