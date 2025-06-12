@@ -1,32 +1,42 @@
-
 import * as pdfjsLib from 'pdfjs-dist';
 import { ExtractedData, ExtractionResult } from '@/types/ExtractedData';
 
-// Configurar o worker do PDF.js para funcionar no navegador - versão compatível com Vite
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.js',
-  import.meta.url
-).toString();
+// Configuração simples sem worker externo - usando a versão legacy
+pdfjsLib.GlobalWorkerOptions.workerSrc = '';
 
 export const extractTextFromPDF = async (file: File): Promise<string> => {
   try {
     const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    
+    // Usar a versão sem worker para evitar problemas de CORS
+    const loadingTask = pdfjsLib.getDocument({
+      data: arrayBuffer,
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true
+    });
+    
+    const pdf = await loadingTask.promise;
     let fullText = '';
 
     for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items
-        .map((item: any) => item.str)
-        .join(' ');
-      fullText += pageText + '\n';
+      try {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items
+          .map((item: any) => item.str)
+          .join(' ');
+        fullText += pageText + '\n';
+      } catch (pageError) {
+        console.warn(`Erro ao processar página ${i}:`, pageError);
+        // Continua com as outras páginas mesmo se uma der erro
+      }
     }
 
     return fullText;
   } catch (error) {
     console.error('Erro ao extrair texto do PDF:', error);
-    throw new Error('Falha ao extrair texto do PDF');
+    throw new Error(`Falha ao extrair texto do PDF: ${error.message}`);
   }
 };
 
