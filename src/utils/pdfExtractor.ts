@@ -1,29 +1,19 @@
+
 import * as pdfjsLib from 'pdfjs-dist';
 import { ExtractedData, ExtractionResult } from '@/types/ExtractedData';
 
-// Desabilitar completamente o worker para evitar erros de CORS
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'data:application/javascript;base64,';
+// Configuração para desabilitar completamente o worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = '';
 
 export const extractTextFromPDF = async (file: File): Promise<string> => {
   try {
     console.log(`Iniciando extração de texto do arquivo: ${file.name}`);
     const arrayBuffer = await file.arrayBuffer();
     
-    // Configuração mais simples possível
+    // Configuração simplificada sem worker
     const loadingTask = pdfjsLib.getDocument({
       data: arrayBuffer,
-      worker: null, // Força a não usar worker
-      verbosity: 0, // Reduz logs
-      cMapUrl: '',
-      cMapPacked: false,
-      standardFontDataUrl: '',
-      useWorkerFetch: false,
-      isEvalSupported: false,
-      useSystemFonts: true,
-      disableFontFace: true,
-      disableRange: true,
-      disableStream: true,
-      disableAutoFetch: true
+      // Remover todas as configurações que podem causar problemas
     });
     
     const pdf = await loadingTask.promise;
@@ -35,10 +25,7 @@ export const extractTextFromPDF = async (file: File): Promise<string> => {
       try {
         console.log(`Processando página ${i}...`);
         const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent({
-          includeMarkedContent: false,
-          disableCombineTextItems: false
-        });
+        const textContent = await page.getTextContent();
         
         const pageText = textContent.items
           .filter((item: any) => item.str && item.str.trim())
@@ -64,39 +51,8 @@ export const extractTextFromPDF = async (file: File): Promise<string> => {
     return fullText;
   } catch (error) {
     console.error('Erro detalhado ao extrair texto do PDF:', error);
-    
-    // Se for erro de worker, tentar uma última abordagem
-    if (error.message && error.message.includes('worker')) {
-      console.log('Tentando abordagem alternativa sem worker...');
-      try {
-        return await extractTextFallback(file);
-      } catch (fallbackError) {
-        console.error('Fallback também falhou:', fallbackError);
-      }
-    }
-    
     throw new Error(`Falha ao extrair texto do PDF: ${error.message || 'Erro desconhecido'}`);
   }
-};
-
-// Função de fallback mais simples
-const extractTextFallback = async (file: File): Promise<string> => {
-  const arrayBuffer = await file.arrayBuffer();
-  
-  // Tentar com configuração mínima absoluta
-  const pdf = await pdfjsLib.getDocument({
-    data: arrayBuffer
-  }).promise;
-  
-  let text = '';
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    const pageText = content.items.map((item: any) => item.str).join(' ');
-    text += pageText + '\n';
-  }
-  
-  return text;
 };
 
 export const extractDataWithChatGPT = async (
