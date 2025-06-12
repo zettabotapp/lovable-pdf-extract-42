@@ -10,7 +10,7 @@ export default defineConfig(({ mode }) => ({
     host: "::",
     port: 8080,
     headers: {
-      'Cross-Origin-Embedder-Policy': 'credentialless',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
       'Cross-Origin-Opener-Policy': 'same-origin',
     },
   },
@@ -26,14 +26,12 @@ export default defineConfig(({ mode }) => ({
   },
   optimizeDeps: {
     include: ['pdfjs-dist'],
-    exclude: ['pdfjs-dist/build/pdf.worker.js'],
   },
   define: {
     global: 'globalThis',
   },
-  build: {
-    rollupOptions: {
-      external: ['pdfjs-dist/build/pdf.worker.js'],
-    },
+  worker: {
+    format: 'es'
   },
+  assetsInclude: ['**/*.wasm']
 }));
